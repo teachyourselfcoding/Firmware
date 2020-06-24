@@ -12,7 +12,7 @@ px4_add_board(
 	#TESTING
 	CONSTRAINED_FLASH
 	#UAVCAN_INTERFACES 2
-
+	examples/px4_simple_app
 	SERIAL_PORTS
 		GPS1:/dev/ttyS3
 		TEL1:/dev/ttyS1
@@ -85,6 +85,7 @@ px4_add_board(
 		vmount
 		vtol_att_control
 		#airspeed_selector
+		px4_simple_app
 
 	SYSTEMCMDS
 		bl_update
@@ -119,7 +120,7 @@ px4_add_board(
 		#hwtest # Hardware test
 		#matlab_csv_serial
 		#px4_mavlink_debug # Tutorial code from http://dev.px4.io/en/debug/debug_values.html
-		#px4_simple_app # Tutorial code from http://dev.px4.io/en/apps/hello_sky.html
+		px4_simple_app # Tutorial code from http://dev.px4.io/en/apps/hello_sky.html
 		#rover_steering_control # Rover example app
 		#uuv_example_app
 	)

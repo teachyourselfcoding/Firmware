@@ -12,7 +12,9 @@ px4_add_board(
 	CONSTRAINED_FLASH
 	#UAVCAN_INTERFACES 2
 
-	SERIAL_PORTS
+
+
+	SSERIAL_PORTS
 		GPS1:/dev/ttyS3
 		TEL1:/dev/ttyS1
 		TEL2:/dev/ttyS2
@@ -82,5 +84,8 @@ px4_add_board(
 		usb_connected
 		ver
 		work_queue
+	EXAMPLES
+		px4_simple_app
 
 	)
+

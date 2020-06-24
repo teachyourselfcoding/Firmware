@@ -42,6 +42,10 @@
  * @author Andreas Bircher <andreas@wingtra.com>
  */
 
+
+// for syslog
+#include <debug.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -187,6 +191,9 @@ private:
 
 	trigger_mode_t		_trigger_mode;
 	int32_t _cam_cap_fback;
+	int _cmd_sub_fd;
+	vehicle_command_s cmd{};
+	int poll_interval_usec = 10;
 
 	camera_interface_mode_t	_camera_interface_mode;
 	CameraInterface		*_camera_interface;  ///< instance of camera interface
@@ -194,6 +201,8 @@ private:
 	/**
 	 * Vehicle command handler
 	 */
+	void		RunOnce();
+
 	void		Run() override;
 
 	/**
@@ -254,6 +263,7 @@ CameraTrigger::CameraTrigger() :
 	_trigger_pub(nullptr),
 	_trigger_mode(TRIGGER_MODE_NONE),
 	_cam_cap_fback(0),
+	_cmd_sub_fd(-1),
 	_camera_interface_mode(CAMERA_INTERFACE_MODE_GPIO),
 	_camera_interface(nullptr)
 {
@@ -432,6 +442,11 @@ CameraTrigger::shoot_once()
 bool
 CameraTrigger::start()
 {
+
+
+	orb_set_interval(trig->_trigger_pub, 1);
+	orb_set_interval(_cmd_sub_fd, 1);
+
 	if (_camera_interface == nullptr) {
 		if (camera_trigger::g_camera_trigger != nullptr) {
 			delete (camera_trigger::g_camera_trigger);
@@ -467,8 +482,8 @@ CameraTrigger::start()
 	}
 
 	// start to monitor at high rate for trigger enable command
+	PX4_INFO("scheduling now");
 	ScheduleNow();
-
 	return true;
 }
 
@@ -488,6 +503,9 @@ CameraTrigger::stop()
 		delete (camera_trigger::g_camera_trigger);
 		camera_trigger::g_camera_trigger = nullptr;
 	}
+
+	if(-1 != _cmd_sub_fd)
+		orb_unsubscribe(_cmd_sub_fd);
 }
 
 void
@@ -503,15 +521,14 @@ CameraTrigger::test()
 }
 
 void
-CameraTrigger::Run()
+CameraTrigger::RunOnce()
 {
-	// default loop polling interval
-	int poll_interval_usec = 5000;
-
-	vehicle_command_s cmd{};
-	unsigned cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+	PX4_INFO("Running once");
 	bool need_ack = false;
-
+	bool updated = true;
+	uint64_t runonce_timestamp;
+	runonce_timestamp= hrt_absolute_time();
+	printf("runonce timestamp: %llu \n", runonce_timestamp);
 	// this flag is set when the polling loop is slowed down to allow the camera to power on
 	_turning_on = false;
 
@@ -519,112 +536,112 @@ CameraTrigger::Run()
 	bool main_state = _trigger_enabled;
 	bool pause_state = _trigger_paused;
 
-	bool updated = _command_sub.update(&cmd);
-
-	// Command handling
-	if (updated) {
-		if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL) {
-
-			need_ack = true;
-
-			if (commandParamToInt(cmd.param7) == 1) {
-				// test shots are not logged or forwarded to GCS for geotagging
-				_test_shot = true;
-			}
-
-			if (commandParamToInt((float)cmd.param5) == 1) {
-				// Schedule shot
-				_one_shot = true;
-			}
-
-			cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
-
-		} else if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_TRIGGER_CONTROL) {
-
-			need_ack = true;
-
-			if (commandParamToInt(cmd.param3) == 1) {
-				// pause triggger
-				_trigger_paused = true;
-
-			} else if (commandParamToInt(cmd.param3) == 0) {
-				_trigger_paused = false;
-			}
-
-			if (commandParamToInt(cmd.param2) == 1) {
-				// reset trigger sequence
-				_trigger_seq = 0;
-			}
-
-			if (commandParamToInt(cmd.param1) == 1) {
-				_trigger_enabled = true;
-
-			} else if (commandParamToInt(cmd.param1) == 0) {
-				_trigger_enabled = false;
-			}
-
-			cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
-
-		} else if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_SET_CAM_TRIGG_DIST) {
-
-			need_ack = true;
-
-			/*
-			 * TRANSITIONAL SUPPORT ADDED AS OF 11th MAY 2017 (v1.6 RELEASE)
-			*/
-
-			if (cmd.param1 > 0.0f) {
-				_distance = cmd.param1;
-				param_set_no_notification(_p_distance, &_distance);
-
-				_trigger_enabled = true;
-				_trigger_paused = false;
-
-			} else if (commandParamToInt(cmd.param1) == 0) {
-				_trigger_paused = true;
-
-			} else if (commandParamToInt(cmd.param1) == -1) {
-				_trigger_enabled = false;
-			}
-
-			// We can only control the shutter integration time of the camera in GPIO mode (for now)
-			if (cmd.param2 > 0.0f) {
-				if (_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
-					_activation_time = cmd.param2;
-					param_set_no_notification(_p_activation_time, &(_activation_time));
-				}
-			}
-
-			// Trigger once immediately if param is set
-			if (cmd.param3 > 0.0f) {
-				// Schedule shot
-				_one_shot = true;
-			}
-
-			cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
-
-		} else if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_SET_CAM_TRIGG_INTERVAL) {
-
-			need_ack = true;
-
-			if (cmd.param1 > 0.0f) {
-				_interval = cmd.param1;
-				param_set_no_notification(_p_interval, &(_interval));
-			}
-
-			// We can only control the shutter integration time of the camera in GPIO mode
-			if (cmd.param2 > 0.0f) {
-				if (_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
-					_activation_time = cmd.param2;
-					param_set_no_notification(_p_activation_time, &_activation_time);
-				}
-			}
-
-			cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
-		}
+	unsigned cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+	bool changed;
+	orb_check(_cmd_sub_fd, &changed);
+	if (changed) {
+		orb_copy(ORB_ID(vehicle_command), _cmd_sub_fd, &cmd);
 	}
+	if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL) {
 
-	// State change handling
+		need_ack = true;
+
+		if (commandParamToInt(cmd.param7) == 1) {
+			// test shots are not logged or forwarded to GCS for geotagging
+			_test_shot = true;
+		}
+
+		if (commandParamToInt((float)cmd.param5) == 1) {
+			// Schedule shot
+			_one_shot = true;
+			PX4_INFO("_one_shot = true");
+		}
+
+		cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
+
+	} else if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_TRIGGER_CONTROL) {
+
+		need_ack = true;
+
+		if (commandParamToInt(cmd.param3) == 1) {
+			// pause triggger
+			_trigger_paused = true;
+
+		} else if (commandParamToInt(cmd.param3) == 0) {
+			_trigger_paused = false;
+		}
+
+		if (commandParamToInt(cmd.param2) == 1) {
+			// reset trigger sequence
+			_trigger_seq = 0;
+		}
+
+		if (commandParamToInt(cmd.param1) == 1) {
+			_trigger_enabled = true;
+
+		} else if (commandParamToInt(cmd.param1) == 0) {
+			_trigger_enabled = false;
+		}
+
+		cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
+
+	} else if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_SET_CAM_TRIGG_DIST) {
+
+		need_ack = true;
+
+		/*
+			* TRANSITIONAL SUPPORT ADDED AS OF 11th MAY 2017 (v1.6 RELEASE)
+		*/
+
+		if (cmd.param1 > 0.0f) {
+			_distance = cmd.param1;
+			param_set_no_notification(_p_distance, &_distance);
+
+			_trigger_enabled = true;
+			_trigger_paused = false;
+
+		} else if (commandParamToInt(cmd.param1) == 0) {
+			_trigger_paused = true;
+
+		} else if (commandParamToInt(cmd.param1) == -1) {
+			_trigger_enabled = false;
+		}
+
+		// We can only control the shutter integration time of the camera in GPIO mode (for now)
+		if (cmd.param2 > 0.0f) {
+			if (_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
+				_activation_time = cmd.param2;
+				param_set_no_notification(_p_activation_time, &(_activation_time));
+			}
+		}
+
+		// Trigger once immediately if param is set
+		if (cmd.param3 > 0.0f) {
+			// Schedule shot
+			_one_shot = true;
+		}
+
+		cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
+
+	} else if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_SET_CAM_TRIGG_INTERVAL) {
+
+		need_ack = true;
+
+		if (cmd.param1 > 0.0f) {
+			_interval = cmd.param1;
+			param_set_no_notification(_p_interval, &(_interval));
+		}
+
+		// We can only control the shutter integration time of the camera in GPIO mode
+		if (cmd.param2 > 0.0f) {
+			if (_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
+				_activation_time = cmd.param2;
+				param_set_no_notification(_p_activation_time, &_activation_time);
+			}
+		}
+
+		cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
+	}
 	if ((main_state != _trigger_enabled) ||
 	    (pause_state != _trigger_paused) ||
 	    _one_shot) {
@@ -711,6 +728,44 @@ CameraTrigger::Run()
 	}
 
 	ScheduleDelayed(poll_interval_usec);
+
+}
+
+void
+CameraTrigger::Run()
+{
+	// default loop polling interval
+	//int poll_interval_usec set as global variable
+	if(_cmd_sub_fd == -1)
+		_cmd_sub_fd =  orb_subscribe(ORB_ID(vehicle_command));
+
+	px4_pollfd_struct_t fds[] = {
+   	 { .fd = _cmd_sub_fd,   .events = POLLIN },
+	};
+	int poll_ret = px4_poll(fds, 1, 1000);
+	if (poll_ret > 0) {
+		if (fds[0].revents & POLLIN) {
+			/* obtained data for the first file descriptor */
+			// _command_sub.update(&cmd);
+			// PX4_INFO("Interrupt received");
+			bool updated;
+			orb_check(_cmd_sub_fd, &updated);
+			while(updated){
+				orb_copy(ORB_ID(vehicle_command), _cmd_sub_fd, &cmd);
+				orb_check(_cmd_sub_fd, &updated);
+			}
+			RunOnce();
+		}else{
+			// PX4_INFO("revents :%d",fds[0].revents);
+		}
+	}else{
+		// PX4_INFO("poll_ret = %d", poll_ret);
+		// PX4_INFO("fd = %d", _cmd_sub_fd);
+	}
+	// orb_unsubscribe(_cmd_sub_fd);
+
+
+	ScheduleDelayed(1);
 }
 
 void
@@ -733,10 +788,14 @@ CameraTrigger::engage(void *arg)
 
 	// Set timestamp the instant after the trigger goes off
 	trigger.timestamp = hrt_absolute_time();
+	syslog(LOG_INFO, "engage timestamp: %llu \n", trigger.timestamp);
+	// printf("engage timestamp: %llu \n", trigger.timestamp);
+	// printf("engaged_timestamp: %llu \n" , trigger.timestamp);
 
 	timespec tv = {};
 	px4_clock_gettime(CLOCK_REALTIME, &tv);
 	trigger.timestamp_utc = (uint64_t) tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
+	// printf("engaged_timestamp_utc: %llu\n", trigger.timestamp_utc);
 
 	trigger.seq = trig->_trigger_seq;
 	trigger.feedback = false;
