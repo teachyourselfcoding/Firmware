@@ -444,9 +444,6 @@ CameraTrigger::start()
 {
 
 
-	orb_set_interval(trig->_trigger_pub, 1);
-	orb_set_interval(_cmd_sub_fd, 1);
-
 	if (_camera_interface == nullptr) {
 		if (camera_trigger::g_camera_trigger != nullptr) {
 			delete (camera_trigger::g_camera_trigger);
@@ -612,7 +609,7 @@ CameraTrigger::RunOnce()
 			if (_camera_interface_mode == CAMERA_INTERFACE_MODE_GPIO) {
 				_activation_time = cmd.param2;
 				param_set_no_notification(_p_activation_time, &(_activation_time));
-			}
+			}orb_set_interval(_cmd_sub_fd, 1);
 		}
 
 		// Trigger once immediately if param is set
@@ -736,9 +733,10 @@ CameraTrigger::Run()
 {
 	// default loop polling interval
 	//int poll_interval_usec set as global variable
-	if(_cmd_sub_fd == -1)
+	if(_cmd_sub_fd == -1){
 		_cmd_sub_fd =  orb_subscribe(ORB_ID(vehicle_command));
-
+	}
+	orb_set_interval(_cmd_sub_fd, 1);
 	px4_pollfd_struct_t fds[] = {
    	 { .fd = _cmd_sub_fd,   .events = POLLIN },
 	};

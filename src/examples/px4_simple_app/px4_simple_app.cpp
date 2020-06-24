@@ -57,8 +57,10 @@
 #include <uORB/topics/vehicle_attitude.h>
 
 extern "C" __EXPORT int px4_simple_app_main(int argc, char *argv[]);
-uint64_t timestamp1;
-uint64_t timestamp2;
+uint64_t timestamp_before_publishing;
+uint64_t timestamp_after_publishing;
+uint64_t timestamp_feedback;
+
 uint64_t _orb_stat;
 
 int px4_simple_app_main(int argc, char *argv[])
@@ -67,7 +69,7 @@ int px4_simple_app_main(int argc, char *argv[])
 	/* trigger subscription updated */
 
 	int _trigger_sub =  orb_subscribe(ORB_ID(camera_trigger));
-	 orb_set_interval(_trigger_sub, 100);
+
 	// "px4_pollfd_struct_t fds[1] = {};
 	// fds[0].fd = _trigger_sub;
 	// fds[0].events = POLLIN;"
@@ -94,13 +96,16 @@ int px4_simple_app_main(int argc, char *argv[])
 	// }
 
 	while(true) {
-		timestamp1= hrt_absolute_time();
-		PX4_INFO("timestamp1: %llu ",timestamp1);
+
 		orb_stat(_trigger_sub, &_orb_stat);
 		PX4_INFO("orb_stat: %llu", _orb_stat);
-
+		timestamp_before_publishing= hrt_absolute_time();
+		PX4_INFO("timestamp_before_publishing: %llu ",hrt_absolute_time());
 
 		orb_publish(ORB_ID(vehicle_command), veh_trig, &cmd);
+
+		PX4_INFO("timestamp_after_publishing: %llu ",hrt_absolute_time());
+
 		/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
 		int poll_ret = px4_poll(fds, 1, 1000);
 
@@ -116,20 +121,20 @@ int px4_simple_app_main(int argc, char *argv[])
 				/* obtained data for the first file descriptor */
 				struct camera_trigger_s trig;
 				/* copy sensors raw data into local buffer */
-				bool updated = true;
-				while(updated){
+				bool updated = false;
+				orb_check(_trigger_sub, &updated);
+				if(updated){
 					orb_copy(ORB_ID(camera_trigger), _trigger_sub, &trig);
-					orb_check(_trigger_sub, &updated);
 				}
-				PX4_INFO("timestamp2: %llu ",trig.timestamp);
-				timestamp2 = trig.timestamp;
+				PX4_INFO("timestamp_feedback: %llu ",trig.timestamp);
+				timestamp_feedback = trig.timestamp;
 				break;
 
 			}
 		}
 	}
 	orb_unadvertise(veh_trig);
-	PX4_INFO("delay =: %llu ",timestamp2-timestamp1);
+	PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
 	PX4_INFO("exiting");
 
 	orb_unsubscribe(_trigger_sub);
