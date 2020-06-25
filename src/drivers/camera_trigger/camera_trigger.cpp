@@ -154,6 +154,12 @@ public:
 	 */
 	void		test();
 
+
+
+
+
+
+
 private:
 
 	struct hrt_call		_engagecall;
@@ -199,7 +205,7 @@ private:
 	CameraInterface		*_camera_interface;  ///< instance of camera interface
 
 	/**
-	 * Vehicle command handler
+	 * Vehicle command handlerfore_publishing
 	 */
 	void		RunOnce();
 
@@ -442,8 +448,6 @@ CameraTrigger::shoot_once()
 bool
 CameraTrigger::start()
 {
-
-
 	if (_camera_interface == nullptr) {
 		if (camera_trigger::g_camera_trigger != nullptr) {
 			delete (camera_trigger::g_camera_trigger);
@@ -479,7 +483,6 @@ CameraTrigger::start()
 	}
 
 	// start to monitor at high rate for trigger enable command
-	PX4_INFO("scheduling now");
 	ScheduleNow();
 	return true;
 }
@@ -520,12 +523,8 @@ CameraTrigger::test()
 void
 CameraTrigger::RunOnce()
 {
-	PX4_INFO("Running once");
 	bool need_ack = false;
 	bool updated = true;
-	uint64_t runonce_timestamp;
-	runonce_timestamp= hrt_absolute_time();
-	printf("runonce timestamp: %llu \n", runonce_timestamp);
 	// this flag is set when the polling loop is slowed down to allow the camera to power on
 	_turning_on = false;
 
@@ -551,7 +550,6 @@ CameraTrigger::RunOnce()
 		if (commandParamToInt((float)cmd.param5) == 1) {
 			// Schedule shot
 			_one_shot = true;
-			PX4_INFO("_one_shot = true");
 		}
 
 		cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
@@ -726,6 +724,7 @@ CameraTrigger::RunOnce()
 
 	ScheduleDelayed(poll_interval_usec);
 
+
 }
 
 void
@@ -742,7 +741,9 @@ CameraTrigger::Run()
 	};
 	int poll_ret = px4_poll(fds, 1, 1000);
 	if (poll_ret > 0) {
+		// timestamp_after_poll_ret = hrt_absolute_time();
 		if (fds[0].revents & POLLIN) {
+			// timestamp_after_data_from_fd = hrt_absolute_time();
 			/* obtained data for the first file descriptor */
 			// _command_sub.update(&cmd);
 			// PX4_INFO("Interrupt received");
@@ -753,12 +754,11 @@ CameraTrigger::Run()
 				orb_check(_cmd_sub_fd, &updated);
 			}
 			RunOnce();
-		}else{
-			// PX4_INFO("revents :%d",fds[0].revents);
+
 		}
+
 	}else{
-		// PX4_INFO("poll_ret = %d", poll_ret);
-		// PX4_INFO("fd = %d", _cmd_sub_fd);
+
 	}
 	// orb_unsubscribe(_cmd_sub_fd);
 
@@ -786,14 +786,13 @@ CameraTrigger::engage(void *arg)
 
 	// Set timestamp the instant after the trigger goes off
 	trigger.timestamp = hrt_absolute_time();
-	syslog(LOG_INFO, "engage timestamp: %llu \n", trigger.timestamp);
-	// printf("engage timestamp: %llu \n", trigger.timestamp);
-	// printf("engaged_timestamp: %llu \n" , trigger.timestamp);
+	// syslog(LOG_INFO, "engage timestamp: %llu \n", trigger.timestamp);
+
 
 	timespec tv = {};
 	px4_clock_gettime(CLOCK_REALTIME, &tv);
 	trigger.timestamp_utc = (uint64_t) tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
-	// printf("engaged_timestamp_utc: %llu\n", trigger.timestamp_utc);
+
 
 	trigger.seq = trig->_trigger_seq;
 	trigger.feedback = false;
