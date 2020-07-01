@@ -75,6 +75,7 @@
 #include "interfaces/src/gpio.h"
 #include "interfaces/src/pwm.h"
 #include "interfaces/src/seagull_map2.h"
+#DEFINE DEBUG;
 
 extern "C" __EXPORT int camera_trigger_main(int argc, char *argv[]);
 
@@ -437,8 +438,9 @@ CameraTrigger::shoot_once()
 {
 	if (!_trigger_paused) {
 		// schedule trigger on and off calls
-		hrt_call_after(&_engagecall, 0,
-			       (hrt_callout)&CameraTrigger::engage, this);
+		// hrt_call_after(&_engagecall, 0,
+		// 	       (hrt_callout)&CameraTrigger::engage, this);
+		engage(this);
 
 		hrt_call_after(&_disengagecall, 0 + (_activation_time * 1000),
 			       (hrt_callout)&CameraTrigger::disengage, this);
@@ -533,11 +535,14 @@ CameraTrigger::RunOnce()
 	bool pause_state = _trigger_paused;
 
 	unsigned cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+	uint64_t timestamponeshot=0;
 	bool changed;
 	orb_check(_cmd_sub_fd, &changed);
 	if (changed) {
 		orb_copy(ORB_ID(vehicle_command), _cmd_sub_fd, &cmd);
 	}
+
+
 	if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL) {
 
 		need_ack = true;
@@ -550,6 +555,8 @@ CameraTrigger::RunOnce()
 		if (commandParamToInt((float)cmd.param5) == 1) {
 			// Schedule shot
 			_one_shot = true;
+			 timestamponeshot= hrt_absolute_time();
+
 		}
 
 		cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED;
@@ -722,6 +729,10 @@ CameraTrigger::RunOnce()
 		_cmd_ack_pub.publish(command_ack);
 	}
 
+	//Timestamponeshot is time after we receive the publication and before the trigger goes off
+	#ifdef DEBUG;
+	PX4_INFO("timestamponeshot = %llu",timestamponeshot);
+	#endif;
 	ScheduleDelayed(poll_interval_usec);
 
 
@@ -736,10 +747,13 @@ CameraTrigger::Run()
 		_cmd_sub_fd =  orb_subscribe(ORB_ID(vehicle_command));
 	}
 	orb_set_interval(_cmd_sub_fd, 1);
+
+
 	px4_pollfd_struct_t fds[] = {
    	 { .fd = _cmd_sub_fd,   .events = POLLIN },
 	};
-	int poll_ret = px4_poll(fds, 1, 1000);
+
+	int poll_ret = px4_poll(fds, 1, 10); //timeout for 10 milliseocnds
 	if (poll_ret > 0) {
 		// timestamp_after_poll_ret = hrt_absolute_time();
 		if (fds[0].revents & POLLIN) {
@@ -747,13 +761,19 @@ CameraTrigger::Run()
 			/* obtained data for the first file descriptor */
 			// _command_sub.update(&cmd);
 			// PX4_INFO("Interrupt received");
+
+
+			//checking we have the most updated topic before copying
 			bool updated;
 			orb_check(_cmd_sub_fd, &updated);
-			while(updated){
+			if(updated){   //if a new topic is not published, go back to waiting for interrupt
+				while(updated){
 				orb_copy(ORB_ID(vehicle_command), _cmd_sub_fd, &cmd);
 				orb_check(_cmd_sub_fd, &updated);
+				}
+				RunOnce();
 			}
-			RunOnce();
+
 
 		}
 
@@ -786,8 +806,11 @@ CameraTrigger::engage(void *arg)
 
 	// Set timestamp the instant after the trigger goes off
 	trigger.timestamp = hrt_absolute_time();
-	// syslog(LOG_INFO, "engage timestamp: %llu \n", trigger.timestamp);
 
+	//Prints to console the exact time trigger went off
+	#ifdef DEBUG;
+	syslog(LOG_INFO, "engage timestamp: %llu \n", trigger.timestamp);
+	#endif
 
 	timespec tv = {};
 	px4_clock_gettime(CLOCK_REALTIME, &tv);
