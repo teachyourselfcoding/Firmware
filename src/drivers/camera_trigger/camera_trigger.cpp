@@ -70,6 +70,7 @@
 #include "interfaces/src/gpio.h"
 #include "interfaces/src/pwm.h"
 #include "interfaces/src/seagull_map2.h"
+#include <px4_posix.h>
 
 extern "C" __EXPORT int camera_trigger_main(int argc, char *argv[]);
 
@@ -175,6 +176,7 @@ private:
 	int			_command_sub;
 	int			_lpos_sub;
 
+
 	orb_advert_t		_trigger_pub;
 	orb_advert_t		_cmd_ack_pub;
 
@@ -188,6 +190,7 @@ private:
 
 	camera_interface_mode_t	_camera_interface_mode;
 	CameraInterface		*_camera_interface;  ///< instance of camera interface
+	
 
 	/**
 	 * Vehicle command handler
@@ -483,7 +486,7 @@ CameraTrigger::stop()
 void
 CameraTrigger::test()
 {
-	struct vehicle_command_s cmd = {
+	 struct vehicle_command_s cmd = {
 		.timestamp = hrt_absolute_time(),
 		.param5 = 1.0f,
 		.param6 = 0.0f,
@@ -499,6 +502,8 @@ CameraTrigger::test()
 	(void)orb_unadvertise(pub);
 }
 
+
+
 void
 CameraTrigger::cycle_trampoline(void *arg)
 {
@@ -506,30 +511,68 @@ CameraTrigger::cycle_trampoline(void *arg)
 	CameraTrigger *trig = reinterpret_cast<CameraTrigger *>(arg);
 
 	// default loop polling interval
-	int poll_interval_usec = 5000;
+	int poll_interval_usec = 1;
 
 	if (trig->_command_sub < 0) {
 		trig->_command_sub = orb_subscribe(ORB_ID(vehicle_command));
 	}
+	int runonce = false;
+	px4_pollfd_struct_t fds[1];
+	fds[0].fd = trig->_command_sub;
+	fds[0].events = POLLIN;
+	
+	/*Doesnt work for 1.8.2*/
+	// px4_pollfd_struct_t fds[] ={
+   	//  { .fd = trig->_command_sub,   .events = POLLIN },
+	// };
 
-	bool updated = false;
-	orb_check(trig->_command_sub, &updated);
-
+	int poll_ret = px4_poll(fds, 1, 10); //timeout for 10 milliseocnds
 	struct vehicle_command_s cmd;
-	unsigned cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
-	bool need_ack = false;
+	if (poll_ret > 0) {
+		// timestamp_after_poll_ret = hrt_absolute_time();
+		if (fds[0].revents & POLLIN) {
+			// timestamp_after_data_from_fd = hrt_absolute_time();
+			/* obtained data for the first file descriptor */
+			// _command_sub.update(&cmd);
+			// PX4_INFO("Interrupt received");
 
-	// this flag is set when the polling loop is slowed down to allow the camera to power on
-	trig->_turning_on = false;
 
-	// these flags are used to detect state changes in the command loop
-	bool main_state = trig->_trigger_enabled;
-	bool pause_state = trig->_trigger_paused;
+			//checking we have the most updated topic before copying
+			bool updated;
+			orb_check(trig->_command_sub, &updated);
+			if(updated){   //if a new topic is not published, go back to waiting for interrupt
+				while(updated){
+					orb_copy(ORB_ID(vehicle_command), trig->_command_sub, &cmd);
+					orb_check(trig->_command_sub, &updated);
+				}
+				runonce = true;
+			}
+		}
+	}
 
-	// Command handling
-	if (updated) {
+	if(runonce){
 
-		orb_copy(ORB_ID(vehicle_command), trig->_command_sub, &cmd);
+		bool updated = false;
+		orb_check(trig->_command_sub, &updated);
+
+		
+		unsigned cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+		bool need_ack = false;
+
+		// this flag is set when the polling loop is slowed down to allow the camera to power on
+		trig->_turning_on = false;
+
+		// these flags are used to detect state changes in the command loop
+		bool main_state = trig->_trigger_enabled;
+		bool pause_state = trig->_trigger_paused;
+
+		// Command handling
+		bool changed;
+		orb_check(trig->_command_sub,&changed);
+		if(changed){
+			orb_copy(ORB_ID(vehicle_command), trig->_command_sub, &cmd);
+		}
+		
 
 		if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL) {
 
@@ -583,7 +626,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 			need_ack = true;
 
 			/*
-			 * TRANSITIONAL SUPPORT ADDED AS OF 11th MAY 2017 (v1.6 RELEASE)
+				* TRANSITIONAL SUPPORT ADDED AS OF 11th MAY 2017 (v1.6 RELEASE)
 			*/
 
 			if (cmd.param1 > 0.0f) {
@@ -637,109 +680,110 @@ CameraTrigger::cycle_trampoline(void *arg)
 
 		}
 
-	}
+		
 
-	// State change handling
-	if ((main_state != trig->_trigger_enabled) ||
-	    (pause_state != trig->_trigger_paused) ||
-	    trig->_one_shot) {
+		// State change handling
+		if ((main_state != trig->_trigger_enabled) ||
+			(pause_state != trig->_trigger_paused) ||
+			trig->_one_shot) {
 
-		if (trig->_trigger_enabled || trig->_one_shot) { // Just got enabled via a command
+			if (trig->_trigger_enabled || trig->_one_shot) { // Just got enabled via a command
 
-			// If camera isn't already powered on, we enable power to it
-			if (!trig->_camera_interface->is_powered_on() &&
-			    trig->_camera_interface->has_power_control()) {
+				// If camera isn't already powered on, we enable power to it
+				if (!trig->_camera_interface->is_powered_on() &&
+					trig->_camera_interface->has_power_control()) {
 
-				trig->toggle_power();
-				trig->enable_keep_alive(true);
+					trig->toggle_power();
+					trig->enable_keep_alive(true);
 
-				// Give the camera time to turn on before starting to send trigger signals
-				poll_interval_usec = 3000000;
-				trig->_turning_on = true;
+					// Give the camera time to turn on before starting to send trigger signals
+					poll_interval_usec = 3000000;
+					trig->_turning_on = true;
+				}
+
+			} else if (!trig->_trigger_enabled || trig->_trigger_paused) { // Just got disabled/paused via a command
+
+				// Power off the camera if we are disabled
+				if (trig->_camera_interface->is_powered_on() &&
+					trig->_camera_interface->has_power_control() &&
+					!trig->_trigger_enabled) {
+
+					trig->enable_keep_alive(false);
+					trig->toggle_power();
+				}
+
+				// cancel all calls for both disabled and paused
+				hrt_cancel(&trig->_engagecall);
+				hrt_cancel(&trig->_disengagecall);
+
+				// ensure that the pin is off
+				hrt_call_after(&trig->_disengagecall, 0,
+						(hrt_callout)&CameraTrigger::disengage, trig);
+
+				// reset distance counter if needed
+				if (trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ON_CMD ||
+					trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ALWAYS_ON) {
+
+					// this will force distance counter reinit on getting enabled/unpaused
+					trig->_valid_position = false;
+
+				}
+
 			}
 
-		} else if (!trig->_trigger_enabled || trig->_trigger_paused) { // Just got disabled/paused via a command
+			// only run on state changes, not every loop iteration
+			if (trig->_trigger_mode == TRIGGER_MODE_INTERVAL_ON_CMD) {
 
-			// Power off the camera if we are disabled
-			if (trig->_camera_interface->is_powered_on() &&
-			    trig->_camera_interface->has_power_control() &&
-			    !trig->_trigger_enabled) {
-
-				trig->enable_keep_alive(false);
-				trig->toggle_power();
-			}
-
-			// cancel all calls for both disabled and paused
-			hrt_cancel(&trig->_engagecall);
-			hrt_cancel(&trig->_disengagecall);
-
-			// ensure that the pin is off
-			hrt_call_after(&trig->_disengagecall, 0,
-				       (hrt_callout)&CameraTrigger::disengage, trig);
-
-			// reset distance counter if needed
-			if (trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ON_CMD ||
-			    trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ALWAYS_ON) {
-
-				// this will force distance counter reinit on getting enabled/unpaused
-				trig->_valid_position = false;
+				// update intervalometer state and reset calls
+				trig->update_intervalometer();
 
 			}
 
 		}
 
-		// only run on state changes, not every loop iteration
-		if (trig->_trigger_mode == TRIGGER_MODE_INTERVAL_ON_CMD) {
+		// run every loop iteration and trigger if needed
+		if (trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ON_CMD ||
+			trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ALWAYS_ON) {
 
-			// update intervalometer state and reset calls
-			trig->update_intervalometer();
+			// update distance counter and trigger
+			trig->update_distance();
 
 		}
 
-	}
+		// One shot command-based capture handling
+		if (trig->_one_shot && !trig->_turning_on) {
 
-	// run every loop iteration and trigger if needed
-	if (trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ON_CMD ||
-	    trig->_trigger_mode == TRIGGER_MODE_DISTANCE_ALWAYS_ON) {
+			// One-shot trigger
+			trig->shoot_once();
+			trig->_one_shot = false;
 
-		// update distance counter and trigger
-		trig->update_distance();
+			if (trig->_test_shot) {
+				trig->_test_shot = false;
+			}
 
-	}
-
-	// One shot command-based capture handling
-	if (trig->_one_shot && !trig->_turning_on) {
-
-		// One-shot trigger
-		trig->shoot_once();
-		trig->_one_shot = false;
-
-		if (trig->_test_shot) {
-			trig->_test_shot = false;
 		}
 
-	}
+		// Command ACK handling
+		if (updated && need_ack) {
+			vehicle_command_ack_s command_ack = {
+				.timestamp = 0,
+				.result_param2 = 0,
+				.command = cmd.command,
+				.result = (uint8_t)cmd_result,
+				.from_external = false,
+				.result_param1 = 0,
+				.target_system = cmd.source_system,
+				.target_component = cmd.source_component
+			};
 
-	// Command ACK handling
-	if (updated && need_ack) {
-		vehicle_command_ack_s command_ack = {
-			.timestamp = 0,
-			.result_param2 = 0,
-			.command = cmd.command,
-			.result = (uint8_t)cmd_result,
-			.from_external = false,
-			.result_param1 = 0,
-			.target_system = cmd.source_system,
-			.target_component = cmd.source_component
-		};
+			if (trig->_cmd_ack_pub == nullptr) {
+				trig->_cmd_ack_pub = orb_advertise_queue(ORB_ID(vehicle_command_ack), &command_ack,
+							vehicle_command_ack_s::ORB_QUEUE_LENGTH);
 
-		if (trig->_cmd_ack_pub == nullptr) {
-			trig->_cmd_ack_pub = orb_advertise_queue(ORB_ID(vehicle_command_ack), &command_ack,
-					     vehicle_command_ack_s::ORB_QUEUE_LENGTH);
+			} else {
+				orb_publish(ORB_ID(vehicle_command_ack), trig->_cmd_ack_pub, &command_ack);
 
-		} else {
-			orb_publish(ORB_ID(vehicle_command_ack), trig->_cmd_ack_pub, &command_ack);
-
+			}
 		}
 	}
 
