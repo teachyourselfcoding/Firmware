@@ -37,7 +37,7 @@
  *
  * @author Example User <mail@example.com>
  */
-
+#define DEBUG
 #include <px4_config.h>
 #include <px4_tasks.h>
 #include <px4_posix.h>
@@ -95,19 +95,15 @@ int px4_simple_app_main(int argc, char *argv[])
 
 	// orb_stat(_trigger_sub, &_orb_stat);
 	// PX4_INFO("orb_stat: %llu", _orb_stat);
+	irqstate_t s = enter_critical_section();
 	timestamp_before_publishing= hrt_absolute_time();
+	cmd.timestamp= timestamp_before_publishing;
 
 
 	orb_publish(ORB_ID(vehicle_command), veh_trig, &cmd);
 
 	timestamp_after_publishing= hrt_absolute_time();
-
-	#ifdef DEBUG
-
-	PX4_INFO("timestamp_before_publishing: %llu ",timestamp_before_publishing);
-	PX4_INFO("timestamp_after_publishing: %llu ",timestamp_after_publishing);
-
-	#endif
+	leave_critical_section(s);
 
 
 	// while(true){
@@ -118,13 +114,17 @@ int px4_simple_app_main(int argc, char *argv[])
 
 	// 	 }
 	// }
-
-	while(true) {
+	int k = 0;
+	while(k<100) {
 
 		struct camera_trigger_s trig;
 		/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
 		int poll_ret = px4_poll(fds, 1, 10);
 
+	#ifdef DEBUG
+
+
+	#endif
 		/* handle the poll result */
 
 		if (poll_ret == 0) {
@@ -160,17 +160,16 @@ int px4_simple_app_main(int argc, char *argv[])
 
 
 			}
+			k++;
 		}
 
 	orb_unadvertise(veh_trig);
 
-	timestamp1= hrt_absolute_time();
-	timestamp2= hrt_absolute_time();
-	PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
 
+	PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
 	#ifdef DEBUG
 
-	
+	PX4_INFO("Publishing delay: %llu ",timestamp_after_publishing-timestamp_before_publishing);
 	PX4_INFO("delay after publishing =: %llu ",timestamp_feedback-timestamp_after_publishing);
 	PX4_INFO("feedback timestamp =: %llu ",timestamp_feedback);
 	PX4_INFO("exiting");

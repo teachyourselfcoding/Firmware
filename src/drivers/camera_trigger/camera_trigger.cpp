@@ -423,13 +423,18 @@ void
 CameraTrigger::shoot_once()
 {
 	if (!_trigger_paused) {
+		// uint64_t timestamp_before_engage = hrt_absolute_time();
+		// engage(this);
+		// uint64_t timestamp_after_engage = hrt_absolute_time();
 
 		// schedule trigger on and off calls
 		hrt_call_after(&_engagecall, 0,
-			       (hrt_callout)&CameraTrigger::engage, this);
-
+		(hrt_callout)&CameraTrigger::engage, this);
 		hrt_call_after(&_disengagecall, 0 + (_activation_time * 1000),
-			       (hrt_callout)&CameraTrigger::disengage, this);
+		(hrt_callout)&CameraTrigger::disengage, this);
+
+		// syslog(LOG_INFO, "timestamp_engage: %llu \n", timestamp_after_engage-timestamp_before_engage);
+		
 	}
 
 }
@@ -527,6 +532,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 	// };
 
 	int poll_ret = px4_poll(fds, 1, 10); //timeout for 10 milliseocnds
+	// irqstate_t s = enter_critical_section();
 	struct vehicle_command_s cmd;
 	if (poll_ret > 0) {
 		// timestamp_after_poll_ret = hrt_absolute_time();
@@ -552,10 +558,6 @@ CameraTrigger::cycle_trampoline(void *arg)
 
 	if(runonce){
 
-		bool updated = false;
-		orb_check(trig->_command_sub, &updated);
-
-		
 		unsigned cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
 		bool need_ack = false;
 
@@ -566,13 +568,12 @@ CameraTrigger::cycle_trampoline(void *arg)
 		bool main_state = trig->_trigger_enabled;
 		bool pause_state = trig->_trigger_paused;
 
-		// Command handling
-		bool changed;
-		orb_check(trig->_command_sub,&changed);
-		if(changed){
-			orb_copy(ORB_ID(vehicle_command), trig->_command_sub, &cmd);
-		}
-		
+		// // Command handling
+		// bool changed;
+		// orb_check(trig->_command_sub,&changed);
+		// if(changed){
+		// 	orb_copy(ORB_ID(vehicle_command), trig->_command_sub, &cmd);
+	
 
 		if (cmd.command == vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL) {
 
@@ -587,6 +588,8 @@ CameraTrigger::cycle_trampoline(void *arg)
 			if (commandParamToInt((float)cmd.param5) == 1) {
 				// Schedule shot
 				trig->_one_shot = true;
+				uint64_t timestamp_one_shot = hrt_absolute_time();
+				syslog(LOG_INFO, "uorb delay: %llu \n", timestamp_one_shot-cmd.timestamp);
 
 			}
 
@@ -688,7 +691,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 			trig->_one_shot) {
 
 			if (trig->_trigger_enabled || trig->_one_shot) { // Just got enabled via a command
-
+				syslog(LOG_INFO, "just got enabled via a command");
 				// If camera isn't already powered on, we enable power to it
 				if (!trig->_camera_interface->is_powered_on() &&
 					trig->_camera_interface->has_power_control()) {
@@ -764,7 +767,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 		}
 
 		// Command ACK handling
-		if (updated && need_ack) {
+		if (need_ack) {
 			vehicle_command_ack_s command_ack = {
 				.timestamp = 0,
 				.result_param2 = 0,
@@ -786,7 +789,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 			}
 		}
 	}
-
+	// leave_critical_section(s);
 	work_queue(LPWORK, &_work, (worker_t)&CameraTrigger::cycle_trampoline,
 		   camera_trigger::g_camera_trigger, USEC2TICK(poll_interval_usec));
 }
@@ -798,7 +801,7 @@ CameraTrigger::engage(void *arg)
 	CameraTrigger *trig = reinterpret_cast<CameraTrigger *>(arg);
 
 	// Trigger the camera
-	trig->_camera_interface->trigger(true);
+	 trig->_camera_interface->trigger(true);
 
 	if (trig->_test_shot) {
 		// do not send messages or increment frame count for test shots
@@ -810,18 +813,19 @@ CameraTrigger::engage(void *arg)
 
 	struct camera_trigger_s	trigger = {};
 
-	// Set timestamp the instant after the trigger goes off
+	// // Set timestamp the instant after the trigger goes off
 	trigger.timestamp = hrt_absolute_time();
 
-	timespec tv = {};
-	px4_clock_gettime(CLOCK_REALTIME, &tv);
-	trigger.timestamp_utc = (uint64_t) tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
+	 timespec tv = {};
+	 px4_clock_gettime(CLOCK_REALTIME, &tv);
+	 trigger.timestamp_utc = (uint64_t) tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
 
-	trigger.seq = trig->_trigger_seq;
+	 trigger.seq = trig->_trigger_seq;
 
 	orb_publish(ORB_ID(camera_trigger), trig->_trigger_pub, &trigger);
-
-	// increment frame count
+	uint64_t after_pub_timestamp = hrt_absolute_time();
+	syslog(LOG_INFO, "publishing delay: %llu \n", after_pub_timestamp-trigger.timestamp);
+	// // increment frame count
 	trig->_trigger_seq++;
 
 }
