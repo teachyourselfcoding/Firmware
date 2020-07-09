@@ -37,7 +37,7 @@
  *
  * @author Example User <mail@example.com>
  */
-#define DEBUG
+//#define DEBUG
 #define SIZE 100
 #include <px4_config.h>
 #include <px4_tasks.h>
@@ -62,7 +62,7 @@ extern "C" __EXPORT int px4_simple_app_main(int argc, char *argv[]);
 uint64_t timestamp_before_publishing;
 uint64_t timestamp_after_publishing;
 uint64_t timestamp_feedback;
-uint64_t timestamp1;10
+uint64_t timestamp1;
 uint64_t timestamp2;
 int array[SIZE]={};
 
@@ -99,13 +99,13 @@ int px4_simple_app_main(int argc, char *argv[])
 
 	#ifdef DEBUG
 
-	int k = 0;
+	
 	int i = 0;
-	struct camera_trigger_s trig;
 	while(i<SIZE){ //running camera_trigger SIZE times within the simple_app
 
 	#endif
-
+		struct camera_trigger_s trig;
+		int k = 0;
 		timestamp_before_publishing= hrt_absolute_time();
 		cmd.timestamp= timestamp_before_publishing;
 		orb_publish(ORB_ID(vehicle_command), veh_trig, &cmd);
@@ -136,20 +136,21 @@ int px4_simple_app_main(int argc, char *argv[])
 
 
 				}else{
-					continue
+					continue;
 				}
 			}
 				k++; 
 			}
+			timestamp_feedback = trig.timestamp;
 	#ifdef DEBUG
-	
+
 			//timestamp received, prepare to trigger camera once more
 			array[i]=(trig.timestamp-timestamp_before_publishing); //enter the delay into an array
 			PX4_INFO("%d =  %d ",i,array[i]);
 			PX4_INFO("trig.timestamp =  %llu ",trig.timestamp);
 			PX4_INFO("timestamp before publishing =  %llu ",timestamp_before_publishing);
 			i++;
-		// timestamp_feedback = trig.timestamp;
+		// 
 	
 	  }
 	#endif
@@ -171,15 +172,15 @@ int px4_simple_app_main(int argc, char *argv[])
 
 
 
-	// PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
-	// #ifdef DEBUG
+	PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
+	#ifdef DEBUG
 
-	// PX4_INFO("Publishing delay: %llu ",timestamp_after_publishing-timestamp_before_publishing);
-	// PX4_INFO("delay after publishing =: %llu ",timestamp_feedback-timestamp_after_publishing);
-	// PX4_INFO("feedback timestamp =: %llu ",timestamp_feedback);
-	// PX4_INFO("exiting");
+	PX4_INFO("Publishing delay: %llu ",timestamp_after_publishing-timestamp_before_publishing);
+	PX4_INFO("delay after publishing =: %llu ",timestamp_feedback-timestamp_after_publishing);
+	PX4_INFO("feedback timestamp =: %llu ",timestamp_feedback);
+	PX4_INFO("exiting");
 
-	// #endif
+	#endif
 	orb_unsubscribe(_trigger_sub);
 	return 0;
 }
