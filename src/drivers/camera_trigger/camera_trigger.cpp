@@ -175,6 +175,7 @@ private:
 
 	int			_command_sub;
 	int			_lpos_sub;
+	struct camera_trigger_s	trigger = {};
 
 
 	orb_advert_t		_trigger_pub;
@@ -317,7 +318,7 @@ CameraTrigger::CameraTrigger() :
 	}
 
 	// Advertise critical publishers here, because we cannot advertise in interrupt context
-	struct camera_trigger_s trigger = {};
+
 	_trigger_pub = orb_advertise(ORB_ID(camera_trigger), &trigger);
 
 }
@@ -428,6 +429,10 @@ CameraTrigger::shoot_once()
 		// uint64_t timestamp_after_engage = hrt_absolute_time();
 
 		// schedule trigger on and off calls
+
+		_camera_interface->trigger(true);
+		trigger.timestamp = hrt_absolute_time();
+
 		hrt_call_after(&_engagecall, 0,
 		(hrt_callout)&CameraTrigger::engage, this);
 		hrt_call_after(&_disengagecall, 0 + (_activation_time * 1000),
@@ -468,14 +473,14 @@ CameraTrigger::start()
 	}
 
 	// start to monitor at high rate for trigger enable command
-	work_queue(LPWORK, &_work, (worker_t)&CameraTrigger::cycle_trampoline, this, USEC2TICK(1));
+	work_queue(HPWORK, &_work, (worker_t)&CameraTrigger::cycle_trampoline, this, USEC2TICK(1));
 
 }
 
 void
 CameraTrigger::stop()
 {
-	work_cancel(LPWORK, &_work);
+	work_cancel(HPWORK, &_work);
 	hrt_cancel(&_engagecall);
 	hrt_cancel(&_disengagecall);
 	hrt_cancel(&_engage_turn_on_off_call);
@@ -691,7 +696,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 			trig->_one_shot) {
 
 			if (trig->_trigger_enabled || trig->_one_shot) { // Just got enabled via a command
-				syslog(LOG_INFO, "just got enabled via a command");
+				// syslog(LOG_INFO, "just got enabled via a command");
 				// If camera isn't already powered on, we enable power to it
 				if (!trig->_camera_interface->is_powered_on() &&
 					trig->_camera_interface->has_power_control()) {
@@ -790,7 +795,7 @@ CameraTrigger::cycle_trampoline(void *arg)
 		}
 	}
 	// leave_critical_section(s);
-	work_queue(LPWORK, &_work, (worker_t)&CameraTrigger::cycle_trampoline,
+	work_queue(HPWORK, &_work, (worker_t)&CameraTrigger::cycle_trampoline,
 		   camera_trigger::g_camera_trigger, USEC2TICK(poll_interval_usec));
 }
 
@@ -801,7 +806,7 @@ CameraTrigger::engage(void *arg)
 	CameraTrigger *trig = reinterpret_cast<CameraTrigger *>(arg);
 
 	// Trigger the camera
-	 trig->_camera_interface->trigger(true);
+	//  trig->_camera_interface->trigger(true);
 
 	if (trig->_test_shot) {
 		// do not send messages or increment frame count for test shots
@@ -811,20 +816,19 @@ CameraTrigger::engage(void *arg)
 	// Send camera trigger message. This messages indicates that we sent
 	// the camera trigger request. Does not guarantee capture.
 
-	struct camera_trigger_s	trigger = {};
+	
 
 	// // Set timestamp the instant after the trigger goes off
-	trigger.timestamp = hrt_absolute_time();
-
+	
 	 timespec tv = {};
 	 px4_clock_gettime(CLOCK_REALTIME, &tv);
-	 trigger.timestamp_utc = (uint64_t) tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
+	 trig->trigger.timestamp_utc = (uint64_t) tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
 
-	 trigger.seq = trig->_trigger_seq;
+	 trig-> trigger.seq = trig->_trigger_seq;
 
-	orb_publish(ORB_ID(camera_trigger), trig->_trigger_pub, &trigger);
-	uint64_t after_pub_timestamp = hrt_absolute_time();
-	syslog(LOG_INFO, "publishing delay: %llu \n", after_pub_timestamp-trigger.timestamp);
+	orb_publish(ORB_ID(camera_trigger), trig->_trigger_pub, &trig->trigger);
+	// uint64_t after_pub_timestamp = hrt_absolute_time();
+	// syslog(LOG_INFO, "publishing delay: %llu \n", after_pub_timestamp-trig->trigger.timestamp);
 	// // increment frame count
 	trig->_trigger_seq++;
 
