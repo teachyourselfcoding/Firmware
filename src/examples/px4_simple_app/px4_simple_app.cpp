@@ -38,6 +38,7 @@
  * @author Example User <mail@example.com>
  */
 #define DEBUG
+#define SIZE 100
 #include <px4_config.h>
 #include <px4_tasks.h>
 #include <px4_posix.h>
@@ -61,9 +62,9 @@ extern "C" __EXPORT int px4_simple_app_main(int argc, char *argv[]);
 uint64_t timestamp_before_publishing;
 uint64_t timestamp_after_publishing;
 uint64_t timestamp_feedback;
-uint64_t timestamp1;
+uint64_t timestamp1;10
 uint64_t timestamp2;
-
+int array[SIZE]={};
 
 uint64_t _orb_stat;
 
@@ -86,95 +87,99 @@ int px4_simple_app_main(int argc, char *argv[])
 
 	struct vehicle_command_s cmd{};
 	orb_advert_t veh_trig = orb_advertise(ORB_ID(vehicle_command), &cmd);
-
-
-
-
+	 //parameters to be changed for triggering camera
 	cmd.command = vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL;
-	cmd.param5 = 1;                                                           //parameters to be changed for triggering camera
+	cmd.param5 = 1;                                                          
 
 	// orb_stat(_trigger_sub, &_orb_stat);
 	// PX4_INFO("orb_stat: %llu", _orb_stat);
-	irqstate_t s = enter_critical_section();
-	timestamp_before_publishing= hrt_absolute_time();
-	cmd.timestamp= timestamp_before_publishing;
-
-
-	orb_publish(ORB_ID(vehicle_command), veh_trig, &cmd);
-
-	timestamp_after_publishing= hrt_absolute_time();
-	leave_critical_section(s);
-
-
-	// while(true){
-	// 	 if (fds[0].revents & POLLIN) {
-	// 		 struct camera_trigger_s trig;
-	// 		 orb_copy(ORB_ID(camera_trigger), _trigger_sub, &trig);
-	// 		 PX4_INFO("timestamp2: %lld", trig.timestamp);
-
-	// 	 }
-	// }
-	int k = 0;
-	while(k<100) {
-
-		struct camera_trigger_s trig;
-		/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
-		int poll_ret = px4_poll(fds, 1, 10);
+	//irqstate_t s = enter_critical_section();
+	
+	//leave_critical_section(s);
 
 	#ifdef DEBUG
 
+	int k = 0;
+	int i = 0;
+	struct camera_trigger_s trig;
+	while(i<SIZE){ //running camera_trigger SIZE times within the simple_app
 
 	#endif
-		/* handle the poll result */
 
-		if (poll_ret == 0) {
-			/* this means none of our providers is giving us data */
-			// PX4_ERR("Got no data within a second");
+		timestamp_before_publishing= hrt_absolute_time();
+		cmd.timestamp= timestamp_before_publishing;
+		orb_publish(ORB_ID(vehicle_command), veh_trig, &cmd);
+		timestamp_after_publishing= hrt_absolute_time();
+		
+		while(k<100) { //if camera_trigger does not send a reply in 1second, exit loop
+			
+			/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
+			int poll_ret = px4_poll(fds, 1, 10);
 
-		}
-		else {
-			if (fds[0].revents & POLLIN) {
-				/* obtained data for the first file descriptor */
-
-				/* copy sensors raw data into local buffer */
-				bool updated = true;    //updated set to true to ensure we orb_check
-				while(updated){
-					orb_check(_trigger_sub, &updated);     //check for an update in topic
-					orb_copy(ORB_ID(camera_trigger), _trigger_sub, &trig);
-					if(trig.timestamp<timestamp_before_publishing){  //if we obtain a previous timestamp (new one didnt come in), continue waitin for interrupt
-						continue;
+			/* handle the poll result */
+			if (poll_ret == 0) {
+				/* this means none of our providers is giving us data */
+			}
+			else {
+				if (fds[0].revents & POLLIN) {
+					/* obtained data for the first file descriptor */
+					/* copy sensors raw data into local buffer */
+					bool updated = true;    //updated set to true to ensure we orb_check
+					while(updated){
+						orb_check(_trigger_sub, &updated);     //check for an update in topic
+						orb_copy(ORB_ID(camera_trigger), _trigger_sub, &trig);
+						if(trig.timestamp<timestamp_before_publishing){  //if we obtain a previous timestamp (new one didnt come in),
+							continue; //continue waiting for interrupt
+						}	
 					}
+					break;//we received the timestamp! Exit while(k<100) loop
 
+
+				}else{
+					continue
 				}
-
-
-			}else{
-				continue;
 			}
-			timestamp_feedback = trig.timestamp;
-			break;
-			/*To resolve occasional error in timestamp collection*/
-			// if(timestamp_feedback>timestamp_before_publishing){
-			// 	break;
-			// }
-
-
+				k++; 
 			}
-			k++;
-		}
-
+	#ifdef DEBUG
+	
+			//timestamp received, prepare to trigger camera once more
+			array[i]=(trig.timestamp-timestamp_before_publishing); //enter the delay into an array
+			PX4_INFO("%d =  %d ",i,array[i]);
+			PX4_INFO("trig.timestamp =  %llu ",trig.timestamp);
+			PX4_INFO("timestamp before publishing =  %llu ",timestamp_before_publishing);
+			i++;
+		// timestamp_feedback = trig.timestamp;
+	
+	  }
+	#endif
 	orb_unadvertise(veh_trig);
 
-
-	PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
 	#ifdef DEBUG
 
-	PX4_INFO("Publishing delay: %llu ",timestamp_after_publishing-timestamp_before_publishing);
-	PX4_INFO("delay after publishing =: %llu ",timestamp_feedback-timestamp_after_publishing);
-	PX4_INFO("feedback timestamp =: %llu ",timestamp_feedback);
-	PX4_INFO("exiting");
+	int64_t sum = 0;   //Adding up sum of all the members in the array, then finding the average
+	for(int j=0;j<SIZE;j++){
+		 sum =sum + array[j];
+	}
+	
+	double avg = static_cast<double>(sum)/SIZE;
+	PX4_INFO("sum = %lld ",sum);
+	PX4_INFO(" avg delay =: %.2lf ",avg);
 
 	#endif
+
+
+
+
+	// PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
+	// #ifdef DEBUG
+
+	// PX4_INFO("Publishing delay: %llu ",timestamp_after_publishing-timestamp_before_publishing);
+	// PX4_INFO("delay after publishing =: %llu ",timestamp_feedback-timestamp_after_publishing);
+	// PX4_INFO("feedback timestamp =: %llu ",timestamp_feedback);
+	// PX4_INFO("exiting");
+
+	// #endif
 	orb_unsubscribe(_trigger_sub);
 	return 0;
 }
