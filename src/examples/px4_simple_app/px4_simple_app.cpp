@@ -86,30 +86,21 @@ int px4_simple_app_main(int argc, char *argv[])
 	orb_advert_t veh_trig = orb_advertise(ORB_ID(vehicle_command), &cmd);
 	cmd.command = vehicle_command_s::VEHICLE_CMD_DO_DIGICAM_CONTROL;
 	cmd.param5 = 1;
+	orb_stat(_trigger_sub, &_orb_stat);
+	PX4_INFO("orb_stat: %llu", _orb_stat);
 
-
-
-	// while(true){
-	// 	 if (fds[0].revents & POLLIN) {
-	// 		 struct camera_trigger_s trig;
-	// 		 orb_copy(ORB_ID(camera_trigger), _trigger_sub, &trig);
-	// 		 PX4_INFO("timestamp2: %lld", trig.timestamp);
-
-	// 	 }
-	// }
 
 	while(true) {
 
-		orb_stat(_trigger_sub, &_orb_stat);
-		PX4_INFO("orb_stat: %llu", _orb_stat);
+
 		timestamp_before_publishing= hrt_absolute_time();
 
 
 		orb_publish(ORB_ID(vehicle_command), veh_trig, &cmd);
 
 		timestamp_after_publishing= hrt_absolute_time();
-		PX4_INFO("timestamp_before_publishing: %llu ",timestamp_before_publishing);
-		PX4_INFO("timestamp_after_publishing: %llu ",timestamp_after_publishing);
+		// PX4_INFO("timestamp_before_publishing: %llu ",timestamp_before_publishing);
+		// PX4_INFO("timestamp_after_publishing: %llu ",timestamp_after_publishing);
 
 		/* wait for sensor update of 1 file descriptor for 1000 ms (1 second) */
 		int poll_ret = px4_poll(fds, 1, 1000);
@@ -126,32 +117,27 @@ int px4_simple_app_main(int argc, char *argv[])
 				/* obtained data for the first file descriptor */
 				struct camera_trigger_s trig;
 				/* copy sensors raw data into local buffer */
-				bool updated = false;
-				orb_check(_trigger_sub, &updated);
-				if(updated){
+				bool updated = true;
+				while(updated){
+					orb_check(_trigger_sub, &updated);
 					orb_copy(ORB_ID(camera_trigger), _trigger_sub, &trig);
+					if(timestamp_feedback<timestamp_before_publishing){
+						continue;
+					}
 				}
 				timestamp_feedback = trig.timestamp;
-
-				/*To resolve occasional error in timestamp collection*/
-				if(timestamp_feedback>timestamp_before_publishing){
-					break;
-				}
-
-
+				break;
 			}
 		}
 	}
 	orb_unadvertise(veh_trig);
 
-	timestamp1= hrt_absolute_time();
-	timestamp2= hrt_absolute_time();
 	PX4_INFO("delay =: %llu ",timestamp_feedback-timestamp_before_publishing);
-	PX4_INFO("delay after publishing =: %llu ",timestamp_feedback-timestamp_after_publishing);
-	PX4_INFO("hrt_absolute_time1 =: %llu ",timestamp1);
-	PX4_INFO("hrt_absolute_time2 =: %llu ",timestamp2);
-	PX4_INFO("hrt_absolute_time_delay =: %llu ",timestamp2-timestamp1);
-	PX4_INFO("exiting");
+
+	#ifdef DEBUG
+	PX4_INFO("feedback =: %llu ",timestamp_feedback);
+	#endif
+
 
 	orb_unsubscribe(_trigger_sub);
 	return 0;
